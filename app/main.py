@@ -5,8 +5,10 @@ import pickle
 import plotly.graph_objects as go
 import os
 
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
 def get_clean_data():
-    data= pd.read_csv("../bc_dataset/data.csv")
+    data= pd.read_csv(os.path.join(BASE_DIR, "..", "bc_dataset", "data.csv"))
     data= data. drop(['id', 'Unnamed: 32'], axis=1)
     data['diagnosis']= data['diagnosis'].map({'M':1, 'B':0})
     return data
@@ -137,9 +139,9 @@ def get_radar_chart(input_data):
     return fig
     
 def get_predictions(input_data):
-    model= pickle.load(open("../Model/model.pkl", "rb"))
-    scaler= pickle.load(open("../Model/scaler.pkl", "rb"))
-
+    model= pickle.load(open(os.path.join(BASE_DIR, "..", "Model", "model.pkl"), "rb"))
+    scaler= pickle.load(open(os.path.join(BASE_DIR, "..", "Model", "scaler.pkl"), "rb"))
+    
     input_arr= np.array(list(input_data.values())).reshape(1,-1)
     input_arr_scaled= scaler.transform(input_arr)
 
@@ -164,7 +166,6 @@ def main():
         layout="wide"
     )
 
-    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
     css_path = os.path.join(BASE_DIR, "..", "assets", "style.css")
 
     with open(css_path) as f:
