@@ -3,6 +3,7 @@ import numpy as np
 import pandas as pd 
 import pickle
 import plotly.graph_objects as go
+import os
 
 def get_clean_data():
     data= pd.read_csv("../bc_dataset/data.csv")
@@ -163,8 +164,12 @@ def main():
         layout="wide"
     )
 
-    with open("../assests/style.css") as f:
-        st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+    css_path = os.path.join(BASE_DIR, "..", "assets", "style.css")
+
+    with open(css_path) as f:
+        css = f.read()
+        st.markdown(f"<style>{css}</style>", unsafe_allow_html=True)
 
     with st.container():
         st.title("Breast cancer predictor")
