@@ -2,6 +2,7 @@ import streamlit as st
 import numpy as np
 import pandas as pd 
 import pickle
+import json
 import plotly.graph_objects as go
 import os
 
@@ -138,16 +139,34 @@ def get_radar_chart(input_data):
     )
     return fig
     
+def get_best_model_key():
+    metrics_path = os.path.join(BASE_DIR, "..", "Model", "metrics.json")
+    with open(metrics_path, "r") as f:
+        metrics = json.load(f)
+
+    # pick whichever model has the highest f1_score
+    best_key = max(metrics, key=lambda k: metrics[k]["f1_score"])
+    return best_key, metrics[best_key]
+
+
 def get_predictions(input_data):
-    model= pickle.load(open(os.path.join(BASE_DIR, "..", "Model", "model.pkl"), "rb"))
-    scaler= pickle.load(open(os.path.join(BASE_DIR, "..", "Model", "scaler.pkl"), "rb"))
-    
-    input_arr= np.array(list(input_data.values())).reshape(1,-1)
-    input_arr_scaled= scaler.transform(input_arr)
+    best_key, best_metrics = get_best_model_key()
+
+    model_path = os.path.join(BASE_DIR, "..", "Model", "models", f"{best_key}.pkl")
+    scaler_path = os.path.join(BASE_DIR, "..", "Model", "scaler.pkl")
+
+    model = pickle.load(open(model_path, "rb"))
+    scaler = pickle.load(open(scaler_path, "rb"))
+
+    # build a DataFrame with the same column names/order used during training,
+    # instead of a bare numpy array, so sklearn doesn't warn about missing feature names
+    input_df = pd.DataFrame([input_data])
+    input_arr_scaled = scaler.transform(input_df)
 
     predictions= model.predict(input_arr_scaled)
 
     st.subheader("Cell Cluster Prediction")
+    st.caption(f"Model used: {best_metrics['display_name']} (F1 = {best_metrics['f1_score']})")
     st.write("The cell cluster is predicted to be: ")
 
     if predictions[0]==1:
