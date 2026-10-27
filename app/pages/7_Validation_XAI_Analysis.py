@@ -1,4 +1,5 @@
 import os
+import sys
 import pickle
 import pandas as pd
 import streamlit as st
@@ -27,6 +28,18 @@ st.set_page_config(
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PROJECT_DIR = os.path.dirname(BASE_DIR)
+
+if BASE_DIR not in sys.path:
+    sys.path.insert(0, BASE_DIR)
+
+from gemma_explainer import (
+    top_features,
+    ask_gemma,
+    parse_reply,
+    faithfulness,
+    build_error_prompt,
+    build_prompt
+)
 
 MODEL_DIR = os.path.join(PROJECT_DIR, "Model")
 MODELS_DIR = os.path.join(MODEL_DIR, "models")
@@ -324,8 +337,9 @@ st.divider()
 st.subheader("🔎 Validation Error Analysis")
 
 validation_errors = y_validation_pred != y_validation.values
+error_indices = [i for i, is_err in enumerate(validation_errors) if is_err]
 
-error_count = int(validation_errors.sum())
+error_count = len(error_indices)
 correct_count = int((~validation_errors).sum())
 
 col1, col2 = st.columns(2)
@@ -343,9 +357,30 @@ col2.metric(
 if error_count > 0:
 
     st.write(
-        "The model made some incorrect predictions on the "
-        "validation set. SHAP can help us inspect which features "
-        "influenced those predictions."
+        f"The model made **{error_count} incorrect prediction(s)** on the "
+        "simulated external validation set. Explaining why the model got a sample "
+        "wrong is often more interesting and valuable than explaining a correct prediction, "
+        "as it exposes which features misled the model."
+    )
+
+    error_rows = []
+    for idx in error_indices:
+        act = "Malignant" if y_validation.iloc[idx] == 1 else "Benign"
+        pred = "Malignant" if y_validation_pred[idx] == 1 else "Benign"
+        err_type = "False Negative" if y_validation.iloc[idx] == 1 else "False Positive"
+        prob = y_validation_proba[idx]
+        error_rows.append({
+            "Validation Sample Index": idx,
+            "Actual Diagnosis": act,
+            "Model Prediction": pred,
+            "Error Type": err_type,
+            "Malignant Probability": f"{prob:.2%}"
+        })
+    error_summary_df = pd.DataFrame(error_rows)
+    st.dataframe(
+        error_summary_df,
+        use_container_width=True,
+        hide_index=True
     )
 
 else:
@@ -480,9 +515,9 @@ st.plotly_chart(
 
 st.subheader("💡 SHAP in Simple English")
 
-top_features = shap_importance.head(5)["Feature"].tolist()
+top_global_features = shap_importance.head(5)["Feature"].tolist()
 
-feature_text = ", ".join(top_features)
+feature_text = ", ".join(top_global_features)
 
 st.write(
     f"For this model, the features with the strongest influence "
@@ -502,34 +537,70 @@ st.divider()
 
 
 # --------------------------------------------------
-# INDIVIDUAL VALIDATION CASE
+# INDIVIDUAL VALIDATION CASE & ERROR EXPLANATION
 # --------------------------------------------------
 
 st.subheader("🔬 Explain an Individual Validation Prediction")
 
-sample_index = st.number_input(
-    "Validation Sample Index",
-    min_value=0,
-    max_value=len(X_validation) - 1,
-    value=0,
-    step=1
+st.write(
+    "Inspect the SHAP feature contributions for a specific validation sample. "
+    "Explaining why the model got an error wrong is often more insightful "
+    "than explaining a correct prediction."
 )
+
+if error_count > 0:
+    sample_mode = st.radio(
+        "Choose sample selection mode:",
+        ["Misclassified Samples (Errors)", "All Validation Samples"],
+        horizontal=True,
+        help="Focusing on errors explains the specific features that misled the model."
+    )
+
+    if sample_mode == "Misclassified Samples (Errors)":
+        error_label_map = {
+            f"Sample #{idx} | Actual: {'Malignant' if y_validation.iloc[idx] == 1 else 'Benign'}, Predicted: {'Malignant' if y_validation_pred[idx] == 1 else 'Benign'} ({'False Negative' if y_validation.iloc[idx] == 1 else 'False Positive'}, Prob: {y_validation_proba[idx]:.1%})": idx
+            for idx in error_indices
+        }
+        selected_label = st.selectbox(
+            "Select an Error Sample to Explain",
+            list(error_label_map.keys())
+        )
+        sample_index = error_label_map[selected_label]
+    else:
+        sample_index = st.number_input(
+            "Validation Sample Index",
+            min_value=0,
+            max_value=len(X_validation) - 1,
+            value=0,
+            step=1
+        )
+else:
+    sample_index = st.number_input(
+        "Validation Sample Index",
+        min_value=0,
+        max_value=len(X_validation) - 1,
+        value=0,
+        step=1
+    )
 
 sample_prediction = y_validation_pred[sample_index]
 sample_probability = y_validation_proba[sample_index]
 sample_actual = y_validation.iloc[sample_index]
+is_error = sample_prediction != sample_actual
 
+actual_label = "Malignant" if sample_actual == 1 else "Benign"
+prediction_label = "Malignant" if sample_prediction == 1 else "Benign"
 
 col1, col2, col3 = st.columns(3)
 
 col1.metric(
-    "Actual",
-    "Malignant" if sample_actual == 1 else "Benign"
+    "Actual Diagnosis",
+    actual_label
 )
 
 col2.metric(
-    "Predicted",
-    "Malignant" if sample_prediction == 1 else "Benign"
+    "Model Prediction",
+    prediction_label
 )
 
 col3.metric(
@@ -537,12 +608,38 @@ col3.metric(
     f"{sample_probability:.2%}"
 )
 
+if is_error:
+    if sample_actual == 1:
+        st.error(
+            "⚠️ **Prediction Error: False Negative** — The true diagnosis is **Malignant**, "
+            "but the model incorrectly predicted **Benign**."
+        )
+    else:
+        st.error(
+            "⚠️ **Prediction Error: False Positive** — The true diagnosis is **Benign**, "
+            "but the model incorrectly predicted **Malignant**."
+        )
+else:
+    st.success(
+        "✅ **Correct Prediction**: The model's prediction matches the true diagnosis."
+    )
+
 
 # --------------------------------------------------
 # SAMPLE SHAP VALUES
 # --------------------------------------------------
 
-sample_shap = shap_array[sample_index]
+if selected_model_name == "SVM" and sample_index >= len(shap_array):
+    with st.spinner("Computing SHAP values for this validation sample..."):
+        svm_sample_shap = explainer.shap_values(
+            X_validation_scaled[sample_index:sample_index + 1]
+        )
+        if isinstance(svm_sample_shap, list):
+            sample_shap = svm_sample_shap[1][0]
+        else:
+            sample_shap = svm_sample_shap[0]
+else:
+    sample_shap = shap_array[sample_index]
 
 sample_explanation = pd.DataFrame({
     "Feature": X_validation.columns,
@@ -574,63 +671,146 @@ top_negative = sample_explanation[
     sample_explanation["SHAP Value"] < 0
 ].head(3)
 
-
-if sample_prediction == 1:
-
-    prediction_direction = "malignant"
-
+if is_error:
+    st.write(
+        f"The model incorrectly predicted **{prediction_label.lower()}** instead of **{actual_label.lower()}**."
+    )
+    if sample_prediction == 0:  # False Negative
+        if not top_negative.empty:
+            neg_feats = ", ".join(top_negative["Feature"].tolist())
+            st.write(
+                f"**Misleading features** pushing the prediction toward benign: **{neg_feats}**."
+            )
+        if not top_positive.empty:
+            pos_feats = ", ".join(top_positive["Feature"].tolist())
+            st.write(
+                f"**Counteracting features** pushing toward malignant (outweighed): **{pos_feats}**."
+            )
+    else:  # False Positive
+        if not top_positive.empty:
+            pos_feats = ", ".join(top_positive["Feature"].tolist())
+            st.write(
+                f"**Misleading features** pushing the prediction toward malignant: **{pos_feats}**."
+            )
+        if not top_negative.empty:
+            neg_feats = ", ".join(top_negative["Feature"].tolist())
+            st.write(
+                f"**Counteracting features** pushing toward benign (outweighed): **{neg_feats}**."
+            )
 else:
+    prediction_direction = "malignant" if sample_prediction == 1 else "benign"
+    st.write(
+        f"The model predicted this validation sample as **{prediction_direction}**."
+    )
+    if not top_positive.empty:
+        positive_features = ", ".join(top_positive["Feature"].tolist())
+        st.write(
+            f"Features pushing the prediction toward malignant include **{positive_features}**."
+        )
+    if not top_negative.empty:
+        negative_features = ", ".join(top_negative["Feature"].tolist())
+        st.write(
+            f"Features pushing the prediction toward benign include **{negative_features}**."
+        )
 
-    prediction_direction = "benign"
 
+# --------------------------------------------------
+# GROUNDED GEMMA EXPLANATION
+# --------------------------------------------------
+
+st.divider()
+
+st.subheader("🤖 Grounded Explanation with Gemma")
 
 st.write(
-    f"The model predicted this validation sample as "
-    f"**{prediction_direction}**."
+    "Gemma explains the model's decision in plain English. "
+    "To keep the explanation grounded and truthful, Gemma receives "
+    "**only the SHAP evidence and the labels** — no outside medical knowledge is assumed."
 )
 
-if not top_positive.empty:
-
-    positive_features = ", ".join(
-        top_positive["Feature"].tolist()
+api_key = os.environ.get("GEMINI_API_KEY")
+if not api_key:
+    api_key = st.text_input(
+        "Enter GEMINI_API_KEY to enable Gemma:",
+        type="password",
+        help="You can also set the GEMINI_API_KEY environment variable."
     )
 
-    st.write(
-        f"Features pushing the prediction toward malignant "
-        f"include **{positive_features}**."
-    )
+button_text = (
+    "Explain this error with Gemma"
+    if is_error
+    else "Explain this prediction with Gemma"
+)
 
-if not top_negative.empty:
+feature_names = list(X_validation.columns)
+feature_values = X_validation.iloc[sample_index].values
 
-    negative_features = ", ".join(
-        top_negative["Feature"].tolist()
-    )
+if st.button(button_text, type="primary"):
+    if not api_key:
+        st.error("Please provide a GEMINI_API_KEY to generate the explanation.")
+    else:
+        with st.spinner("Generating grounded Gemma explanation..."):
+            try:
+                if is_error:
+                    prompt = build_error_prompt(
+                        model_name=selected_model_name,
+                        actual_label=actual_label,
+                        prediction_label=prediction_label,
+                        probability=sample_probability,
+                        feature_names=feature_names,
+                        feature_values=feature_values,
+                        shap_vals=sample_shap
+                    )
+                else:
+                    prompt = build_prompt(
+                        prediction=prediction_label,
+                        feature_names=feature_names,
+                        feature_values=feature_values,
+                        shap_values=sample_shap,
+                        probability=sample_probability,
+                        model_name=selected_model_name
+                    )
 
-    st.write(
-        f"Features pushing the prediction toward benign "
-        f"include **{negative_features}**."
-    )
+                reply = ask_gemma(prompt, api_key=api_key)
+                data_reply = parse_reply(reply)
 
+                if data_reply is None:
+                    st.error("Gemma's reply was not valid JSON. Response:")
+                    st.write(reply)
+                else:
+                    st.markdown("### 📝 Gemma's Grounded Explanation")
+                    st.info(data_reply.get("explanation", ""))
 
-if sample_prediction == sample_actual:
+                    # Verification / Faithfulness check
+                    real_top_tuples = top_features(feature_names, sample_shap, 3)
+                    real_top = [name for name, _ in real_top_tuples]
+                    gemma_top = data_reply.get("top_features", [])
 
-    st.success(
-        "The model's prediction matches the actual diagnosis. "
-        "The SHAP values above show which features contributed "
-        "most strongly to that prediction."
-    )
+                    score = faithfulness(real_top, gemma_top, 3)
 
-else:
+                    st.markdown("#### 🔍 Grounding & Faithfulness Verification")
+                    col_a, col_b = st.columns(2)
+                    with col_a:
+                        st.write("**Real Top-3 SHAP Features:**")
+                        for rank, (name, val) in enumerate(real_top_tuples, 1):
+                            st.write(f"{rank}. `{name}` (SHAP: {val:+.4f})")
+                    with col_b:
+                        st.write("**Gemma's Cited Features:**")
+                        for rank, name in enumerate(gemma_top, 1):
+                            st.write(f"{rank}. `{name}`")
 
-    st.warning(
-        "This prediction is incorrect. The SHAP values help show "
-        "which feature pattern influenced the model toward the "
-        "wrong class."
-    )
+                    if score == 1.0:
+                        st.success("✅ **Verified**: Gemma's cited features match the top SHAP features (3/3).")
+                    elif score > 0:
+                        st.info(f"ℹ️ **Partial Match**: {int(round(score * 3))}/3 cited features match the top SHAP ranking.")
+                    else:
+                        st.warning("⚠️ **Mismatch**: Gemma's cited features differed from the top 3 SHAP features.")
+
+            except Exception as e:
+                st.error(f"Error calling Gemma: {e}")
 
 
 st.caption(
-    "Important: SHAP explains why the machine-learning model "
-    "made a prediction. It should not be interpreted as a "
-    "medical diagnosis or causal explanation."
+    "Important: SHAP and Gemma describe model behavior and feature influence only. "
+    "They do not represent medical causation or clinical diagnoses."
 )
