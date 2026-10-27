@@ -795,7 +795,7 @@ if st.button(button_text, type="primary"):
                 else:
                     st.warning("⚠️ **Mismatch**: Gemma's cited features differed from the top 3 SHAP features.")
 
-            except Exception as e:
+        except Exception as e:
                 st.error(f"Error calling Gemma: {e}")
 
 
