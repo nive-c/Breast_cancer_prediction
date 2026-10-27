@@ -1,4 +1,4 @@
-# VerifyXAI: Breast Cancer Prediction with Explainable AI and Gemma 4
+# ValidXAI: Breast Cancer Prediction with Explainable AI and Gemma 4
 
 **Live demo:** https://breastcancerprediction-duy4hpw764ihy9esyzudmr.streamlit.app/
 
