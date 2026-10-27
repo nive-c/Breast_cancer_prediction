@@ -4,12 +4,28 @@ import time
 from google import genai
 from google.genai import types
 
+# --------------------------------------------------
+# CONFIGURATION & API KEY
+# --------------------------------------------------
+# Paste your Gemini API key directly here:
+GEMINI_API_KEY = "YOUR_GEMINI_API_KEY_HERE"
+
 # check the exact Gemma 4 model name in Google AI Studio / the competition page
 MODEL_NAME = "gemma-4-26b-a4b-it"
 USE_IMAGE = False
 
 def get_client(api_key=None):
-    key = api_key or os.environ.get("GEMINI_API_KEY")
+    key = (
+        api_key
+        or (GEMINI_API_KEY if GEMINI_API_KEY and GEMINI_API_KEY != "YOUR_GEMINI_API_KEY_HERE" else None)
+        or os.environ.get("GEMINI_API_KEY")
+    )
+    if not key:
+        try:
+            import streamlit as st
+            key = st.secrets.get("GEMINI_API_KEY", None)
+        except Exception:
+            pass
     if not key:
         return None
     return genai.Client(api_key=key)
@@ -100,7 +116,9 @@ def ask_gemma(prompt, image=None, api_key=None):
         image = None
     client = get_client(api_key=api_key)
     if client is None:
-        raise ValueError("GEMINI_API_KEY is not set.")
+        raise ValueError(
+            "GEMINI_API_KEY is not configured. Please paste your Gemini API key into GEMINI_API_KEY at the top of app/gemma_explainer.py."
+        )
     contents = [prompt]
     if image is not None:
         contents.append(image)

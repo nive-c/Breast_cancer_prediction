@@ -728,14 +728,6 @@ st.write(
     "**only the SHAP evidence and the labels** — no outside medical knowledge is assumed."
 )
 
-api_key = os.environ.get("GEMINI_API_KEY")
-if not api_key:
-    api_key = st.text_input(
-        "Enter GEMINI_API_KEY to enable Gemma:",
-        type="password",
-        help="You can also set the GEMINI_API_KEY environment variable."
-    )
-
 button_text = (
     "Explain this error with Gemma"
     if is_error
@@ -746,65 +738,62 @@ feature_names = list(X_validation.columns)
 feature_values = X_validation.iloc[sample_index].values
 
 if st.button(button_text, type="primary"):
-    if not api_key:
-        st.error("Please provide a GEMINI_API_KEY to generate the explanation.")
-    else:
-        with st.spinner("Generating grounded Gemma explanation..."):
-            try:
-                if is_error:
-                    prompt = build_error_prompt(
-                        model_name=selected_model_name,
-                        actual_label=actual_label,
-                        prediction_label=prediction_label,
-                        probability=sample_probability,
-                        feature_names=feature_names,
-                        feature_values=feature_values,
-                        shap_vals=sample_shap
-                    )
+    with st.spinner("Generating grounded Gemma explanation..."):
+        try:
+            if is_error:
+                prompt = build_error_prompt(
+                    model_name=selected_model_name,
+                    actual_label=actual_label,
+                    prediction_label=prediction_label,
+                    probability=sample_probability,
+                    feature_names=feature_names,
+                    feature_values=feature_values,
+                    shap_vals=sample_shap
+                )
+            else:
+                prompt = build_prompt(
+                    prediction=prediction_label,
+                    feature_names=feature_names,
+                    feature_values=feature_values,
+                    shap_values=sample_shap,
+                    probability=sample_probability,
+                    model_name=selected_model_name
+                )
+
+            reply = ask_gemma(prompt)
+            data_reply = parse_reply(reply)
+
+            if data_reply is None:
+                st.error("Gemma's reply was not valid JSON. Response:")
+                st.write(reply)
+            else:
+                st.markdown("### 📝 Gemma's Grounded Explanation")
+                st.info(data_reply.get("explanation", ""))
+
+                # Verification / Faithfulness check
+                real_top_tuples = top_features(feature_names, sample_shap, 3)
+                real_top = [name for name, _ in real_top_tuples]
+                gemma_top = data_reply.get("top_features", [])
+
+                score = faithfulness(real_top, gemma_top, 3)
+
+                st.markdown("#### 🔍 Grounding & Faithfulness Verification")
+                col_a, col_b = st.columns(2)
+                with col_a:
+                    st.write("**Real Top-3 SHAP Features:**")
+                    for rank, (name, val) in enumerate(real_top_tuples, 1):
+                        st.write(f"{rank}. `{name}` (SHAP: {val:+.4f})")
+                with col_b:
+                    st.write("**Gemma's Cited Features:**")
+                    for rank, name in enumerate(gemma_top, 1):
+                        st.write(f"{rank}. `{name}`")
+
+                if score == 1.0:
+                    st.success("✅ **Verified**: Gemma's cited features match the top SHAP features (3/3).")
+                elif score > 0:
+                    st.info(f"ℹ️ **Partial Match**: {int(round(score * 3))}/3 cited features match the top SHAP ranking.")
                 else:
-                    prompt = build_prompt(
-                        prediction=prediction_label,
-                        feature_names=feature_names,
-                        feature_values=feature_values,
-                        shap_values=sample_shap,
-                        probability=sample_probability,
-                        model_name=selected_model_name
-                    )
-
-                reply = ask_gemma(prompt, api_key=api_key)
-                data_reply = parse_reply(reply)
-
-                if data_reply is None:
-                    st.error("Gemma's reply was not valid JSON. Response:")
-                    st.write(reply)
-                else:
-                    st.markdown("### 📝 Gemma's Grounded Explanation")
-                    st.info(data_reply.get("explanation", ""))
-
-                    # Verification / Faithfulness check
-                    real_top_tuples = top_features(feature_names, sample_shap, 3)
-                    real_top = [name for name, _ in real_top_tuples]
-                    gemma_top = data_reply.get("top_features", [])
-
-                    score = faithfulness(real_top, gemma_top, 3)
-
-                    st.markdown("#### 🔍 Grounding & Faithfulness Verification")
-                    col_a, col_b = st.columns(2)
-                    with col_a:
-                        st.write("**Real Top-3 SHAP Features:**")
-                        for rank, (name, val) in enumerate(real_top_tuples, 1):
-                            st.write(f"{rank}. `{name}` (SHAP: {val:+.4f})")
-                    with col_b:
-                        st.write("**Gemma's Cited Features:**")
-                        for rank, name in enumerate(gemma_top, 1):
-                            st.write(f"{rank}. `{name}`")
-
-                    if score == 1.0:
-                        st.success("✅ **Verified**: Gemma's cited features match the top SHAP features (3/3).")
-                    elif score > 0:
-                        st.info(f"ℹ️ **Partial Match**: {int(round(score * 3))}/3 cited features match the top SHAP ranking.")
-                    else:
-                        st.warning("⚠️ **Mismatch**: Gemma's cited features differed from the top 3 SHAP features.")
+                    st.warning("⚠️ **Mismatch**: Gemma's cited features differed from the top 3 SHAP features.")
 
             except Exception as e:
                 st.error(f"Error calling Gemma: {e}")
